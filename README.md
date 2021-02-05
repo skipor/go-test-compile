@@ -1,7 +1,25 @@
 # go-test-compile
 
-Compiling all golang tests without running. It can be used like `go build` that also build tests 
-or like `go test -c` that works for multiple directories.
+`go-test-compile` compiling all golang tests without running. 
+It can be used like `go build` that also build tests or like `go test -c` that works for multiple packages.
+
+### Why it is better than `go test --count=0` or `--run='^$'`
+
+* It does not run any TestMain.
+* It can save resulting binaries.
+
+## How it is implemented
+
+Idea is to use `go test --exec` flag. Here it's doc from `go help test`:
+
+```
+	-exec xprog
+	    Run the test binary using xprog. The behavior is the same as
+	    in 'go run'. See 'go help run' for details.
+```
+
+* If pass `--exec` that does `exit 0`, than it works like  _build all binaries and don't save them_.
+* If pass `--exec` that moves binary somewhere, than works like _Build all binaries and do save them (maybe in a directory tree)_.
 
 ## Install
 
