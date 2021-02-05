@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# Author: Vladimir Skipor <v@skipor.com>
+set -eu
+GO_TEST_COMPILE_OUTPUT=""
+ARGS=()
+while [[ $# -gt 0 ]]; do
+  key="$1"
+  case $key in
+  -o | --output)
+    GO_TEST_COMPILE_OUTPUT="$2"
+    shift # Key.
+    shift # Value.
+    ;;
+  -h | --help)
+    cat - <<'EOF'
+go-test-compile wraps 'go test' allowing not run test executables at all (even TestMain) 
+and save compiled test executables for future run.
+
+Usage:
+  go-test-compile [-o|--output <output directory>] [go test flags and arguments]
+EOF
+    exit 2
+    ;;
+  *) # `go test` args and flags.
+    ARGS+=("$1")
+    shift
+    ;;
+  esac
+done
+set -- "${ARGS[@]}" # Restore args.
+
+if [[ "$GO_TEST_COMPILE_OUTPUT" != "" ]]; then
+  mkdir -p "$GO_TEST_COMPILE_OUTPUT"
+  # Ensure path is absolute.
+  GO_TEST_COMPILE_OUTPUT="$(cd "$GO_TEST_COMPILE_OUTPUT" && pwd)"
+fi
+export GO_TEST_COMPILE_OUTPUT # Export for exec script.
+
+EXEC_SCRIPT="/tmp/go-test-compile-exec"
+trap '{ rm -f -- "$EXEC_SCRIPT"; }' EXIT
+touch "$EXEC_SCRIPT"
+chmod 0755 "$EXEC_SCRIPT"
+cat - <<'EOF' >"$EXEC_SCRIPT"
+#!/usr/bin/env bash
+# Author: Vladimir Skipor <v@skipor.com>
+set -euo pipefail
+# From 'go help test':
+#   -exec xprog
+#   	    Run the test binary using xprog. The behavior is the same as
+#   	    in 'go run'. See 'go help run' for details.
+# From 'go help run'
+#   By default, 'go run' runs the compiled binary directly: 'a.out arguments...'.
+#   If the -exec flag is given, 'go run' invokes the binary using xprog:
+#   	'xprog a.out arguments...'.
+
+# If GO_TEST_COMPILE_OUTPUT is not set, then just exit, without moving binaries from work dir.
+if [[ "$GO_TEST_COMPILE_OUTPUT" == "" ]]; then
+  exit 0
+fi
+
+# Move test binary
+TEST_EXECUTABLE="$1"
+PACKAGE_BUILD_DIR="$(dirname "$TEST_EXECUTABLE")"
+TESTS_MAIN_PACKAGE_ID=""
+{
+  # Example of importcfg.link first line:
+  #   packagefile github.com/skipor/project/pkg/somepkg.test=$GOCACHE/76/763f11c6a8c508a269fc3540fdcf9ff7513627a6eef52bb7f3091a1b925f41e2-d
+  IFS=' =' read -ra FIELDS <"${PACKAGE_BUILD_DIR}/importcfg.link"
+  # FIELDS now like ("packagefile" "github.com/skipor/project/pkg/somepkg.test" "$GOCACHE/76/763f11c6a8c508a269fc3540fdcf9ff7513627a6eef52bb7f3091a1b925f41e2-d")
+
+  # Example: github.com/skipor/project/pkg/somepkg.test
+  TESTS_MAIN_PACKAGE_ID="${FIELDS[1]}"
+}
+# Example: github.com/skipor/project/pkg
+PACKAGE_DIR="$(dirname "$TESTS_MAIN_PACKAGE_ID")"
+mkdir -p "${GO_TEST_COMPILE_OUTPUT}/${PACKAGE_DIR}"
+mv "$TEST_EXECUTABLE" "${GO_TEST_COMPILE_OUTPUT}/${TESTS_MAIN_PACKAGE_ID}"
+EOF
+
+# --count=0 disables caching, so forces all executables build.
+exec go test "$@" --exec="$EXEC_SCRIPT" --count=0 >/dev/null
